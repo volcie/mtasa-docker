@@ -8,20 +8,20 @@ LABEL org.opencontainers.image.licenses=MIT
 # Use noninteractive mode to avoid prompts during package installation
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt -y upgrade \
-	&& apt -y install libreadline-dev libncurses-dev libmysqlclient-dev unzip wget netcat-openbsd dumb-init \
-	&& rm -rf /var/lib/apt/lists/*
+    && apt -y install libreadline-dev libncurses-dev libmysqlclient-dev unzip wget netcat-openbsd dumb-init \
+    && rm -rf /var/lib/apt/lists/*
 
 # Download libssl1.1 library for different architectures
 RUN ARCH=$(dpkg --print-architecture) && \
-	if [ "$ARCH" = "amd64" ]; then \
-		wget -O /tmp/libssl1.1.deb https://launchpad.net/ubuntu/+archive/primary/+files/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb; \
-	elif [ "$ARCH" = "arm64" ]; then \
-		wget -O /tmp/libssl1.1.deb https://launchpad.net/ubuntu/+archive/primary/+files/libssl1.1_1.1.1f-1ubuntu2.24_arm64.deb; \
-	fi && \
-	if [ -f /tmp/libssl1.1.deb ]; then \
-		dpkg -i /tmp/libssl1.1.deb && \
-		rm /tmp/libssl1.1.deb; \
-	fi
+    if [ "$ARCH" = "amd64" ]; then \
+    wget -O /tmp/libssl1.1.deb https://launchpad.net/ubuntu/+archive/primary/+files/libssl1.1_1.1.1f-1ubuntu2.24_amd64.deb; \
+    elif [ "$ARCH" = "arm64" ]; then \
+    wget -O /tmp/libssl1.1.deb https://launchpad.net/ubuntu/+archive/primary/+files/libssl1.1_1.1.1f-1ubuntu2.24_arm64.deb; \
+    fi && \
+    if [ -f /tmp/libssl1.1.deb ]; then \
+    dpkg -i /tmp/libssl1.1.deb && \
+    rm /tmp/libssl1.1.deb; \
+    fi
 
 # Set default permissions
 ARG DEFAULT_PERMISSIONS=755
@@ -35,12 +35,12 @@ WORKDIR /src
 
 # Create directories for volumes and set permissions
 RUN mkdir -p /src/shared-config \
-	&& mkdir -p /src/shared-modules \
-	&& mkdir -p /src/shared-resources \
-	&& mkdir -p /src/shared-http-cache \
-	&& mkdir -p /src/shared-databases \
-	&& chown -R ${USER_NAME}:${GROUP_NAME} /src \
-	&& chmod -R ${DEFAULT_PERMISSIONS} /src
+    && mkdir -p /src/shared-modules \
+    && mkdir -p /src/shared-resources \
+    && mkdir -p /src/shared-http-cache \
+    && mkdir -p /src/shared-databases \
+    && chown -R ${USER_NAME}:${GROUP_NAME} /src \
+    && chmod -R ${DEFAULT_PERMISSIONS} /src
 
 # Copy over entrypoint and run scripts and change their permissions
 COPY --chown=${USER_NAME}:${GROUP_NAME} --chmod=${DEFAULT_PERMISSIONS} ./entrypoint.sh /src/entrypoint.sh
@@ -56,7 +56,7 @@ EXPOSE 22003/udp 22005/tcp 22126/udp
 VOLUME ["/src/shared-config", "/src/shared-modules", "/src/shared-resources", "/src/shared-http-cache", "/src/shared-databases"]
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-	CMD nc -z -u 127.0.0.1 22003 || exit 1
+    CMD nc -z -u 127.0.0.1 22003 || exit 1
 
 # Set the entrypoint
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/src/entrypoint.sh"]

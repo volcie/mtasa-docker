@@ -1,9 +1,14 @@
 #!/bin/bash
 
+set -u
+
 ARCH=$(uname -m)
 ARCH_TYPE=""
 EXECUTABLE_NAME=""
 PIPE_FILE="/tmp/mta_input_$$"
+SERVER_PID=""
+SERVER_STOP_DELAY="${SERVER_STOP_DELAY:-10}"
+STDIN_ACTIVE=true
 
 get_architecture() {
     case "$ARCH" in
@@ -43,12 +48,15 @@ create_pipe() {
     }
 }
 
+cleanup_pipe() {
+    exec 3>&- 2>/dev/null || true
+    [ -e "$PIPE_FILE" ] && rm -f "$PIPE_FILE"
+}
+
 save_databases() {
     echo "Saving databases.."
 
-    if [ ! -d "shared-databases" ]; then
-        mkdir -p shared-databases
-    fi
+    mkdir -p shared-databases
 
     # Save internal.db and registry.db to shared-databases
     for file in internal.db registry.db; do
@@ -63,96 +71,123 @@ save_databases() {
     fi
 }
 
+graceful_shutdown() {
+    echo "Shutting down..."
+
+    # Send shutdown command to server via pipe
+    echo "shutdown" >&3 2>/dev/null || true
+
+    # Wait for server to exit gracefully
+    local elapsed=0
+    while [ "$elapsed" -lt "$SERVER_STOP_DELAY" ] && kill -0 "$SERVER_PID" 2>/dev/null; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    # Force kill server if still running
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill -TERM "$SERVER_PID" 2>/dev/null || true
+        sleep 1
+        kill -KILL "$SERVER_PID" 2>/dev/null || true
+    fi
+
+    # Exit triggers cleanup_and_save via EXIT trap
+    exit 0
+}
+
+cleanup_and_save() {
+    cleanup_pipe
+    save_databases
+}
+
+server_is_running() {
+    [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null
+}
+
+# Forward STDIN to the server via the named pipe
+# Handles EOF gracefully to avoid busy-wait CPU spin
+forward_stdin() {
+    local line read_status
+
+    while server_is_running; do
+        # If STDIN was closed (EOF), just wait for server to exit
+        if [ "$STDIN_ACTIVE" = false ]; then
+            sleep 1
+            continue
+        fi
+
+        # Read with timeout
+        # Exit codes: 0 = success, 1 = EOF, >128 = timeout
+        read -r -t 1 line
+        read_status=$?
+
+        if [ "$read_status" -eq 0 ]; then
+            # Successfully read a line, forward it to server
+            echo "$line" >&3 2>/dev/null || true
+
+            # Exit loop on shutdown commands (server will handle them)
+            case "$line" in
+                shutdown|quit|exit) break ;;
+            esac
+        elif [ "$read_status" -gt 128 ]; then
+            # Timeout - normal, continue waiting for input
+            continue
+        else
+            # EOF or error (status 1) - stop reading
+            STDIN_ACTIVE=false
+        fi
+    done
+}
+
 main() {
     get_architecture
     get_executable_name
 
-    SERVER_STOP_DELAY="${SERVER_STOP_DELAY:-10}"
-    create_pipe
-
-    graceful_shutdown() {
-        echo "Shutting down..."
-
-        # Send shutdown command to server via pipe
-        echo "shutdown" >&3 2>/dev/null || true
-
-        # Wait for server to exit gracefully (max $SERVER_STOP_DELAY seconds)
-        local elapsed=0
-        while [ $elapsed -lt $SERVER_STOP_DELAY ] && kill -0 "$SERVER_PID" 2>/dev/null; do
-            sleep 1
-            elapsed=$((elapsed + 1))
-        done
-
-        # Force kill server if still running
-        if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-            kill -TERM "$SERVER_PID" 2>/dev/null || true
-            sleep 1
-            kill -KILL "$SERVER_PID" 2>/dev/null || true
-        fi
-
-        # Clean up pipe
-        exec 3>&- 2>/dev/null || true
-        [ -p "$PIPE_FILE" ] && rm -f "$PIPE_FILE"
-
-        save_data
-        exit 0
-    }
-
-    trap graceful_shutdown SIGTERM SIGINT
-
-    echo "Starting MTA:SA Server.."
-
-    # Check if executable exists
+    # Check if executable exists before creating pipe
     if [ ! -f "multitheftauto_linux${ARCH_TYPE}/${EXECUTABLE_NAME}" ]; then
         echo "ERROR: Executable not found: multitheftauto_linux${ARCH_TYPE}/${EXECUTABLE_NAME}"
         exit 1
     fi
 
-    # Use a minimal pipe keeper to prevent blocking (will be killed immediately)
-    (exec 3>"$PIPE_FILE"; sleep 1) &
+    create_pipe
+    trap graceful_shutdown SIGTERM SIGINT
+    trap cleanup_and_save EXIT
+
+    echo "Starting MTA:SA Server.."
+
+    # Named pipes block on open until both ends are connected.
+    # We need a writer before the server (reader) can start, but exec 3> blocks
+    # until a reader exists. Solution: background a temporary writer to unblock
+    # the server's read-open, then establish our persistent writer.
+
+    # Start temporary pipe keeper (keeps pipe open for writing in background)
+    { sleep infinity; } > "$PIPE_FILE" &
     PIPE_KEEPER_PID=$!
 
-    # Start server with pipe input (won't block because pipe has a writer)
+    # Start server with pipe as STDIN (won't block now since pipe has a writer)
     stdbuf -oL "multitheftauto_linux${ARCH_TYPE}/${EXECUTABLE_NAME}" -t -n -u < "$PIPE_FILE" &
     SERVER_PID=$!
 
-    # Kill the temporary pipe keeper and open our own connection
-    kill "$PIPE_KEEPER_PID" 2>/dev/null || true
+    # Now open our persistent write handle (won't block since server is reading)
     exec 3>"$PIPE_FILE"
 
-    # Verify server started
+    # Kill the temporary pipe keeper - we have our own handle now
+    kill "$PIPE_KEEPER_PID" 2>/dev/null || true
+    wait "$PIPE_KEEPER_PID" 2>/dev/null || true
+
+    # Verify server started successfully
     sleep 1
-    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    if ! server_is_running; then
         echo "ERROR: Server process died immediately"
         exit 1
     fi
 
+    # Forward STDIN to server until server exits or shutdown command
+    forward_stdin
 
-    # Interactive command loop
-    while kill -0 "$SERVER_PID" 2>/dev/null; do
-        if read -r -t 1 line 2>/dev/null; then
-            if [ "$line" = "shutdown" ] || [ "$line" = "quit" ] || [ "$line" = "exit" ]; then
-                echo "$line" >&3 2>/dev/null || true
-                break
-            else
-                echo "$line" >&3 2>/dev/null || true
-            fi
-        fi
-    done
-
-    wait "$SERVER_PID"
-    SERVER_EXIT_CODE=$?
-
-    # Clean up
-    exec 3>&- 2>/dev/null || true
-    [ -p "$PIPE_FILE" ] && rm -f "$PIPE_FILE"
-
-    save_data
-    exit $SERVER_EXIT_CODE
-}
-
-save_data() {
-    save_databases
+    # Wait for server to exit and capture exit code
+    wait "$SERVER_PID" 2>/dev/null
+    exit $?
 }
 
 main
