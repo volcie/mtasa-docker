@@ -1,4 +1,4 @@
-# Luminaire1337/mtasa-docker
+# volcie/mtasa-docker
 
 ### Unofficial MTA:SA Server Docker Image
 
@@ -8,16 +8,10 @@ This repository provides a Docker container for Multi Theft Auto: San Andreas (M
 
 ### Pulling the Image
 
-You can pull the pre-built image directly from GitHub Container Registry:
+You can pull the pre-built image directly from Docker Hub:
 
 ```bash
-docker pull ghcr.io/luminaire1337/mtasa-docker:latest
-```
-
-Or from Docker Hub:
-
-```bash
-docker pull luminaire/mtasa-docker:latest
+docker pull volcie/mtasa-docker:latest
 ```
 
 Alternatively, build it yourself from the repository:
@@ -37,7 +31,7 @@ docker run -it \
   -p 22003:22003/udp \
   -p 22005:22005/tcp \
   -p 22126:22126/udp \
-  -d ghcr.io/luminaire1337/mtasa-docker:latest
+  -d volcie/mtasa-docker:latest
 ```
 
 #### Docker Compose
@@ -47,7 +41,7 @@ You can also use Docker Compose to run the container. Here's an example `docker-
 ```yaml
 services:
   mtasa:
-    image: ghcr.io/luminaire1337/mtasa-docker:latest
+    image: volcie/mtasa-docker:latest
     container_name: mtasa
     restart: unless-stopped
     volumes:
@@ -94,4 +88,4 @@ This image supports multiple platforms:
 
 ## License
 
-The Docker image [ghcr.io/luminaire1337/mtasa-docker](https://github.com/Luminaire1337/mtasa-docker) is licensed under the [GNU GPL v3.0 License](https://github.com/Luminaire1337/mtasa-docker/blob/master/LICENSE).
+This repository is a fork of [Luminaire1337/mtasa-docker](https://github.com/Luminaire1337/mtasa-docker), licensed under the [GNU GPL v3.0 License](https://github.com/Luminaire1337/mtasa-docker/blob/master/LICENSE). This fork follows the same license terms.
